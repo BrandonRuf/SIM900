@@ -26,7 +26,6 @@ class SIM900_api():
 
     """
 
-
     def __init__(self, name='ASRL4::INSTR', pyvisa_py=False):
 
         # Create a resource management object
@@ -134,7 +133,6 @@ class SIM900_api():
         s = self.readPort(port)
         return s
 
-        
     def inWaiting(self, p):
         """
         Queries the mainframe to get the number of bytes waiting
