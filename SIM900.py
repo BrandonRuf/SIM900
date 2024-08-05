@@ -1,186 +1,279 @@
-"""
-Written by Brandon Ruffolo for the Modern Physics lab at McGill University.
-"""
-
 import numpy   as _n
+import time    as _t
+import spinmob as _s
 import time    as _time
-import pyvisa  as _visa
+import spinmob.egg as _egg
+_g = _egg.gui
+import mcphysics as _mp
+from SIM900_api import SIM900_api
 
-_DEBUG = False
-WRITE_DELAY = .3
+try: from . import _visa_tools
+except: _visa_tools = _mp.instruments._visa_tools
 
-class SIM900_api():
+
+_DEBUG = True
+
+class SIM900(_g.BaseObject):
     """
-    This object lets you query the SRS SIM900 Mainframe.
-
+    Graphical front-end for the Keithley 199 DMM.
 
     Parameters
     ----------
-    name='ASRL3::INSTR'
-        Visa resource name. Use R&S Tester 64-bit or NI-MAX to find this.
+    autosettings_path='keithley_dmm'
+        Which file to use for saving the gui stuff. This will also be the first
+        part of the filename for the other settings files.
 
     pyvisa_py=False
-        If True, use the all-python VISA implementation. On Windows, the simplest
-        Visa implementation seems to be Rhode & Schwarz (streamlined) or NI-VISA (bloaty),
-        with pyvisa_py=False.
+        Whether to use pyvisa_py or not.
 
+    block=False
+        Whether to block the command line while showing the window.
     """
+    def __init__(self, autosettings_path='SIM900', pyvisa_py=False, block=False):
+        if not _mp._visa: _s._warn('You need to install pyvisa to use the Keithley DMMs.')
 
-    def __init__(self, name='ASRL4::INSTR', pyvisa_py=False):
+        # No scope selected yet
+        self.api = None
 
-        # Create a resource management object
-        self.resource_manager = _visa.ResourceManager()
+        # Internal parameters
+        self._pyvisa_py = pyvisa_py
+
+        # Build the GUI
+        self.window    = _g.Window('SIM900', autosettings_path=autosettings_path+'_window')
+        self.window.event_close = self.event_close
+        self.grid_top  = self.window.place_object(_g.GridLayout(False))
+        self.window.new_autorow()
+        self.grid_bot  = self.window.place_object(_g.GridLayout(False), alignment=0)
+
+        self.button_connect   = self.grid_top.place_object(_g.Button('Connect', True, False))
+
+        self.button_acquire = self.grid_top.place_object(_g.Button('Acquire',True).disable())
+        self.label_dmm_name = self.grid_top.place_object(_g.Label('Disconnected'))
+
+        self.settings  = self.grid_bot.place_object(_g.TreeDictionary(),alignment=0).set_width(250)
+        self.tabs_data = self.grid_bot.place_object(_g.TabArea(autosettings_path+'_tabs_data.txt'), alignment=0)
+        self.tab_raw   = self.tabs_data.add_tab('Raw Data')
+
+        self.label_path = self.tab_raw.add(_g.Label('Output Path:').set_colors('cyan' if _s.settings['dark_theme_qt'] else 'blue'))
+        self.tab_raw.new_autorow()
+
+        self.plot_raw  = self.tab_raw.place_object(_g.DataboxPlot('*.csv', autosettings_path+'_plot_raw.txt', autoscript=2), alignment=0)
         
-        self.id = None
+        self.grid_bot.set_column_stretch(1,1)
+        # Create a resource management object to populate the list
+        if _mp._visa:
+            if pyvisa_py: self.resource_manager = _mp._visa.ResourceManager('@py')
+            else:         self.resource_manager = _mp._visa.ResourceManager()
+        else: self.resource_manager = None
 
-        # Get time t=t0
-        self._t0 = _time.time()
-
-        # Try to open the instrument.
-        try:
-            self.instrument = self.resource_manager.open_resource(name)
-            self.instrument.timeout = 2000
-
-            # Test that it's responding and figure out the type.
-            try:
-                # Flush all port buffers, in case old data is present
-                self.instrument.write("FLSH")
-
-                # Ask for the model identifier
-                self.id = self.query('*IDN?')
-                print("ID: %s"%self.id)
-                
-            except:
-                print("ERROR: Instrument did not reply to ID query. Entering simulation mode.")
-                self.instrument.close()
-                self.instrument = None
-
-        except:
-            self.instrument = None
-            if self.resource_manager:
-                print("ERROR: Could not open instrument. Entering simulation mode.")
-                print("Available Instruments:")
-                for name in self.resource_manager.list_resources(): print("  "+name)
+        # Populate the list.
+        names = []
+        if self.resource_manager:
+            for x in self.resource_manager.list_resources():
+                if self.resource_manager.resource_info(x).alias:
+                    names.append(str(self.resource_manager.resource_info(x).alias))
+                else:
+                    names.append(x)
+        self.settings.set_minimum_width(200)
+        # VISA settings
+        self.settings.add_parameter('VISA/Device', type='list', values=['Simulation']+names)
         
         
-    def write(self, message):
+        # SIM922 settings
+        self.settings.add_parameter('SIM922/ID', '', readonly=True)
+        self.settings.add_parameter('SIM922/Channels/1', False)
+        self.settings.add_parameter('SIM922/Channels/2', False)
+        self.settings.add_parameter('SIM922/Channels/3', False)
+        self.settings.add_parameter('SIM922/Channels/4', False)
+        
+
+
+        # Connect all the signals
+        self.button_connect.signal_clicked.connect(self._button_connect_clicked)
+        self.button_acquire.signal_clicked.connect(self._button_acquire_clicked)
+
+        # Run the base object stuff and autoload settings
+        _g.BaseObject.__init__(self, autosettings_path=autosettings_path)
+
+        self.load_gui_settings()
+
+        # Show the window.
+        self.window.show(block)
+
+    def _button_connect_clicked(self, *a):
         """
-        Writes the supplied message.
-
-        Parameters
-        ----------
-        message
-            String message to send to the DMM.
+        Connects or disconnects the VISA resource.
         """
-        _debug('write('+"'"+message+"'"+')')
 
-        if self.instrument == None: s = None
-        else:                       s = self.instrument.write(message)
+        # If we're supposed to connect
+        if self.button_connect.get_value():
 
-        return s
+            # Close it if it exists for some reason
+            if not self.api == None: self.api.close()
 
-    
-    def read(self):
-        """
-        Reads a message and returns it.
+            # Make the new one
+            self.api = SIM900_api(self.settings['VISA/Device'], self._pyvisa_py)
 
-        Parameters
-        ----------
-        process_events=False
-            Optional function to be called in between communications, e.g., to
-            update a gui.
-        """
-        _debug('read()')
-
-
-        if self.instrument == None: response = ''
-        else:                       response = self.instrument.read()
-
-        _debug('  '+repr(response))
-        return response.strip()
-    
-    def query(self, message):
-        """
-        Writes the supplied message and reads the response.
-        """
-        _debug("query('"+message+"')")
-
-        self.write(message)
-        _time.sleep(WRITE_DELAY)
-        
-        response = self.instrument.read()
-        return response.strip()
-    
-    def writePort(self, port, message):
-        self.instrument.write("SNDT %d, '%s'"%(port,message))
-    
-    def readPort(self, port, nbytes = None):
-        
-        # Determine number of bytes waiting in the port input buffer
-        if (nbytes == None): nbytes = self.inWaiting(port)
-        
-        self.instrument.write("RAWN? %d,%d" %(port,nbytes))
-        _time.sleep(WRITE_DELAY)
-        response = self.instrument.read()
-        
-        return response.strip()
-    
-    def queryPort(self, port, message, nbytes = None):
-        
-        if(self.inWaiting(port) != 0): self.flush(port)
-        self.writePort(port,message)
-        _time.sleep(WRITE_DELAY)
-        s = self.readPort(port)
-        return s
-
-    def inWaiting(self, p):
-        """
-        Queries the mainframe to get the number of bytes waiting
-        in the Port p input buffer.
-
-        Parameters
-        ----------
-        p : int
-            Port number 1-8.
-
-        Returns
-        -------
-        int
-            Number of bytes waiting in port p input buffer.
-
-        """
-        n = self.query("NINP? %d"%p)
-        
-        return int(n)
-        
-    def flush(self, port = None):
-        """
-        Flushes Port input buffers [associated with port p].
-
-        Parameters
-        ----------
-        p : int (optional)
-            Port number to flush.
-
-        """
-        if(port==None): self.instrument.write("FLSI")
-        else:           self.instrument.write("FLSI %d"%port)
-        
-    def scanPorts(self):
-    # Loop over all port numbers
-        for i in range(1,9):
-            
-            self.instrument.write("SNDT %d,'*IDN?'"%i)
-            _time.sleep(.1)
-            j = self.inWaiting(i)
-            if(j!= 0): 
-                s = self.query("RAWN? %d,%d"%(i,j)).split(',')[1]          
-                print("Port %d: %s"%(i,s))
+            # Tell the user what dmm is connected
+            if self.api.instrument == None:
+                self.label_dmm_name.set_text('*** Simulation Mode ***')
+                self.label_dmm_name.set_colors('pink' if _s.settings['dark_theme_qt'] else 'red')
+                self.button_connect.set_colors(background='pink')
             else:
-                print("Port %d: Empty"%i)
+                self.label_dmm_name.set_text(self.api.id)
+                self.label_dmm_name.set_colors('blue')
+            
+            
+            self.settings["SIM922/ID"] = self.api.queryPort(1, "*IDN?")[33:].replace(",", " ")
+            ex = self.api.queryPort(1,"EXON? 0").replace(' ','').split(',')
+            print(ex)
+            for n in range(4):
+                self.settings["SIM922/Channels/%d"%(n+1)] = int(ex[n])
+                print(self.settings["SIM922/Channels/%d"%(n+1)])
+                self.settings.connect_signal_changed("SIM922/Channels/%d"%(n+1),self.sim922_refresh)
+                
 
+            # Enable the Acquire button
+            self.button_acquire.enable()
+
+        elif not self.api == None:
+
+            # Close down the instrument
+            if not self.api.instrument == None:
+                self.api.close()
+            self.api = None
+            self.label_dmm_name.set_text('Disconnected')
+
+            # Make sure it's not still red.
+            self.label_dmm_name.set_style('')
+            self.button_connect.set_colors(background='')
+
+            # Disable the acquire button
+            self.button_acquire.disable()
+
+    def _button_acquire_clicked(self, *a):
+        """
+        Get the enabled curves, storing them in plot_raw.
+        """
+        _debug('_button_acquire_clicked()')
+
+        # Don't double-loop!
+        if not self.button_acquire.is_checked(): return
+
+        # Don't proceed if we have no connection
+        if self.api == None:
+            self.button_acquire(False)
+            return
+        print('a')
+        # Ask the user for the dump file
+        self.path = _s.dialogs.save('*.csv', 'Select an output file.', force_extension='*.csv')
+        if self.path == None:
+            self.button_acquire(False)
+            return
+
+        # Update the label
+        self.label_path.set_text('Output Path: ' + self.path)
+
+        _debug('  path='+repr(self.path))
+
+        # Disable the connection button
+        self._set_acquisition_mode(True)
+
+        # For easy coding
+        d = self.plot_raw
+
+        # Set up the databox columns
+        _debug('  setting up databox')
+        d.clear()
+        for n in range(2):
+            d['t'+str(n+1)] = []
+            d['v'+str(n+1)] = []
+        
+        # Reset the clock and record it as header
+        self.api._t0 = _time.time()
+        self._dump(['Date:', _time.ctime()], 'w')
+        self._dump(['Time:', self.api._t0])
+        # And the column labels!
+        self._dump(self.plot_raw.ckeys)
+        # Loop until the user quits
+        _debug('  starting the loop')
+        while self.button_acquire.is_checked():
+
+            # Next line of data
+            data = []
+            
+            self.api.writePort(1,"VOLT? 0")
+            for i in range(3):
+                _time.sleep(.1)
+                self.window.process_events()
+            
+            
+            v = self.api.readPort(1).split(',')
+            v = [float(i) for i in v]
+            t = _time.time() - self.api._t0
+
+            # Get all the voltages we're supposed to
+            for n in range(1,3):
+
+                _debug('    getting the voltage')
+                                          
+                # Append the new data points
+                d['t'+str(n)] = _n.append(d['t'+str(n)], t)
+                d['v'+str(n)] = _n.append(d['v'+str(n)], v[n-1])
+
+                # Update the plot
+                self.plot_raw.plot()
+                self.window.process_events()
+
+                # Append this to the list
+                data = data + [t,v]
+
+            # Write the line to the dump file
+            self._dump(data)
+
+        _debug('  Loop complete!')
+
+        # Unlock the front panel if we're supposed to
+        #if self.settings['Acquire/Unlock']: self.api.unlock()
+
+        # Re-enable the connect button
+        self._set_acquisition_mode(False)
+
+    def _dump(self, a, mode='a'):
+        """
+        Opens self.path, writes the list a, closes self.path. mode is the file
+        open mode.
+        """
+        _debug('_dump('+str(a)+', '+ repr(mode)+')')
+
+        # Make sure everything is a string
+        for n in range(len(a)): a[n] = str(a[n])
+        self.a = a
+        # Write it.
+        f = open(self.path, mode)
+        f.write(','.join(a)+'\n')
+        f.close()
+        
+    def _set_acquisition_mode(self, mode=True):
+        """
+        Enables / disables the appropriate buttons, depending on the mode.
+        """
+        _debug('_set_acquisition_mode('+repr(mode)+')')
+        self.button_connect.disable(mode)
+
+    def event_close(self, *a):
+        """
+        Quits acquisition loop when the window closes.
+        """
+        self.button_acquire.set_checked(False)
+    
+    def sim922_refresh(self):
+        for n in range(4):
+            val = self.settings["SIM922/Channels/%d"%(n+1)]
+            self.api.writePort(1, "EXON %d, %d"%(n+1,val))
+                
 def _debug(message):
     if _DEBUG: print(message)
-    
+        
 if __name__ == '__main__':
-    self = SIM900_api()
+    self = SIM900()
