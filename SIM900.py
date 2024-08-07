@@ -16,11 +16,11 @@ _DEBUG = True
 
 class SIM900(_g.BaseObject):
     """
-    Graphical front-end for the Keithley 199 DMM.
+    Graphical front-end for the SIM900 Mainframe w/SIM922 Diode temperature module
 
     Parameters
     ----------
-    autosettings_path='keithley_dmm'
+    autosettings_path='SIM900'
         Which file to use for saving the gui stuff. This will also be the first
         part of the filename for the other settings files.
 
@@ -31,7 +31,7 @@ class SIM900(_g.BaseObject):
         Whether to block the command line while showing the window.
     """
     def __init__(self, autosettings_path='SIM900', pyvisa_py=False, block=False):
-        if not _mp._visa: _s._warn('You need to install pyvisa to use the Keithley DMMs.')
+        if not _mp._visa: _s._warn('You need to install pyvisa to use the SIM900 Mainframe.')
 
         # No scope selected yet
         self.api = None
@@ -93,8 +93,6 @@ class SIM900(_g.BaseObject):
         self.sim922_channels = [d['SIM922/Channels/1'],d['SIM922/Channels/2'],
                                 d['SIM922/Channels/3'], d['SIM922/Channels/4']]
         
-
-
         # Connect all the signals
         self.button_connect.signal_clicked.connect(self._button_connect_clicked)
         self.button_acquire.signal_clicked.connect(self._button_acquire_clicked)
