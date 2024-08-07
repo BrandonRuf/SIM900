@@ -58,7 +58,7 @@ class SIM900(_g.BaseObject):
         self.label_path = self.tab_raw.add(_g.Label('Output Path:').set_colors('cyan' if _s.settings['dark_theme_qt'] else 'blue'))
         self.tab_raw.new_autorow()
 
-        self.plot_raw  = self.tab_raw.place_object(_g.DataboxPlot('*.csv', autosettings_path+'_plot_raw.txt', autoscript=2), alignment=0)
+        self.plot_raw  = self.tab_raw.place_object(_g.DataboxPlot('*.csv', autosettings_path+'_plot_raw.txt', autoscript=1), alignment=0)
         
         self.grid_bot.set_column_stretch(1,1)
         # Create a resource management object to populate the list
@@ -89,9 +89,6 @@ class SIM900(_g.BaseObject):
         
         # Make things easier
         d = self.settings
-        
-        self.sim922_channels = [d['SIM922/Channels/1'],d['SIM922/Channels/2'],
-                                d['SIM922/Channels/3'], d['SIM922/Channels/4']]
         
         # Connect all the signals
         self.button_connect.signal_clicked.connect(self._button_connect_clicked)
@@ -130,6 +127,7 @@ class SIM900(_g.BaseObject):
             
             self.settings["SIM922/ID"] = self.api.queryPort(1, "*IDN?")[33:].replace(",", " ")
             ex = self.api.queryPort(1,"EXON? 0").replace(' ','').split(',')
+            
             for n in range(4):
                 self.settings["SIM922/Channels/%d"%(n+1)] = int(ex[n])
                 self.settings.connect_signal_changed("SIM922/Channels/%d"%(n+1),self.sim922_refresh)
@@ -190,8 +188,8 @@ class SIM900(_g.BaseObject):
         d.clear()
         
         d['t'] = []
-        for n in range(len(self.sim922_channels)):
-            if self.sim922_channels[n]: 
+        for n in range(4):
+            if self.settings["SIM922/Channels/%d"%(n+1)]: 
                 d['v'+str(n+1)] = []
         
         # Reset the clock and record it as header
@@ -221,8 +219,8 @@ class SIM900(_g.BaseObject):
             data   = [t]
 
             # Get all the voltages we're supposed to
-            for n in range(len(self.sim922_channels)):
-                if(self.sim922_channels[n]):
+            for n in range(4):
+                if self.settings["SIM922/Channels/%d"%(n+1)]: 
                     
                     # Append the new data points
                     d['v'+str(n+1)] = _n.append(d['v'+str(n+1)], v[n])
