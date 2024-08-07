@@ -9,6 +9,7 @@ from SIM900_api import SIM900_api
 
 try: from . import _visa_tools
 except: _visa_tools = _mp.instruments._visa_tools
+_debug_enabled = True
 
 
 _DEBUG = True
@@ -76,7 +77,7 @@ class SIM900(_g.BaseObject):
                     names.append(x)
         self.settings.set_minimum_width(200)
         # VISA settings
-        self.settings.add_parameter('VISA/Device', type='list', values=['Simulation']+names)
+        self.settings.add_parameter('VISA/Device', type='list',default_list_index=4, values=['Simulation']+names)
         
         
         # SIM922 settings
@@ -85,6 +86,12 @@ class SIM900(_g.BaseObject):
         self.settings.add_parameter('SIM922/Channels/2', False)
         self.settings.add_parameter('SIM922/Channels/3', False)
         self.settings.add_parameter('SIM922/Channels/4', False)
+        
+        # Make things easier
+        d = self.settings
+        
+        self.sim922_channels = [d['SIM922/Channels/1'],d['SIM922/Channels/2'],
+                                d['SIM922/Channels/3'], d['SIM922/Channels/4']]
         
 
 
@@ -123,15 +130,11 @@ class SIM900(_g.BaseObject):
                 self.label_dmm_name.set_text(self.api.id)
                 self.label_dmm_name.set_colors('blue')
             
-            
             self.settings["SIM922/ID"] = self.api.queryPort(1, "*IDN?")[33:].replace(",", " ")
             ex = self.api.queryPort(1,"EXON? 0").replace(' ','').split(',')
-            print(ex)
             for n in range(4):
                 self.settings["SIM922/Channels/%d"%(n+1)] = int(ex[n])
-                print(self.settings["SIM922/Channels/%d"%(n+1)])
                 self.settings.connect_signal_changed("SIM922/Channels/%d"%(n+1),self.sim922_refresh)
-                
 
             # Enable the Acquire button
             self.button_acquire.enable()
@@ -164,11 +167,13 @@ class SIM900(_g.BaseObject):
         if self.api == None:
             self.button_acquire(False)
             return
-        print('a')
+        self.settings.disable()
+        
         # Ask the user for the dump file
         self.path = _s.dialogs.save('*.csv', 'Select an output file.', force_extension='*.csv')
         if self.path == None:
             self.button_acquire(False)
+            self.settings.enable()
             return
 
         # Update the label
@@ -185,59 +190,60 @@ class SIM900(_g.BaseObject):
         # Set up the databox columns
         _debug('  setting up databox')
         d.clear()
-        for n in range(2):
-            d['t'+str(n+1)] = []
-            d['v'+str(n+1)] = []
+        
+        d['t'] = []
+        for n in range(len(self.sim922_channels)):
+            if self.sim922_channels[n]: 
+                d['v'+str(n+1)] = []
         
         # Reset the clock and record it as header
         self.api._t0 = _time.time()
         self._dump(['Date:', _time.ctime()], 'w')
         self._dump(['Time:', self.api._t0])
+        
         # And the column labels!
         self._dump(self.plot_raw.ckeys)
+        
         # Loop until the user quits
         _debug('  starting the loop')
         while self.button_acquire.is_checked():
 
-            # Next line of data
-            data = []
             
             self.api.writePort(1,"VOLT? 0")
             for i in range(3):
                 _time.sleep(.1)
                 self.window.process_events()
             
-            
+            _debug('    getting the voltage')
             v = self.api.readPort(1).split(',')
             v = [float(i) for i in v]
             t = _time.time() - self.api._t0
+            
+            d['t'] = _n.append(d['t'], t)
+            data   = [t]
 
             # Get all the voltages we're supposed to
-            for n in range(1,3):
-
-                _debug('    getting the voltage')
-                                          
-                # Append the new data points
-                d['t'+str(n)] = _n.append(d['t'+str(n)], t)
-                d['v'+str(n)] = _n.append(d['v'+str(n)], v[n-1])
-
-                # Update the plot
-                self.plot_raw.plot()
-                self.window.process_events()
-
-                # Append this to the list
-                data = data + [t,v]
+            for n in range(len(self.sim922_channels)):
+                if(self.sim922_channels[n]):
+                    
+                    # Append the new data points
+                    d['v'+str(n+1)] = _n.append(d['v'+str(n+1)], v[n])
+    
+                    # Append this to the list
+                    data = data + [v[n]]
+            # Update the plot
+            self.plot_raw.plot()
+            self.window.process_events()
 
             # Write the line to the dump file
             self._dump(data)
 
         _debug('  Loop complete!')
 
-        # Unlock the front panel if we're supposed to
-        #if self.settings['Acquire/Unlock']: self.api.unlock()
-
         # Re-enable the connect button
         self._set_acquisition_mode(False)
+        
+        self.settings.enable()
 
     def _dump(self, a, mode='a'):
         """
@@ -277,3 +283,5 @@ def _debug(message):
         
 if __name__ == '__main__':
     self = SIM900()
+    #self.settings['VISA/Device'] = 'COM4'
+    #self.button_connect.click()
