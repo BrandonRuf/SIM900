@@ -103,7 +103,7 @@ class SIM900_api():
         """
         Writes the supplied message and reads the response.
         """
-        _debug("query('"+message+"')")
+        #_debug("query('"+message+"')")
 
         self.write(message)
         _time.sleep(WRITE_DELAY)
