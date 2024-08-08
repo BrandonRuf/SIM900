@@ -70,7 +70,7 @@ class SIM900_api():
         Parameters
         ----------
         message
-            String message to send to the DMM.
+            String message to send to the mainframe.
         """
         _debug('write('+"'"+message+"'"+')')
 
@@ -82,13 +82,13 @@ class SIM900_api():
     
     def read(self):
         """
-        Reads a message and returns it.
-
-        Parameters
-        ----------
-        process_events=False
-            Optional function to be called in between communications, e.g., to
-            update a gui.
+        Reads a message from the mainframe output buffer.
+        
+        Returns
+        -------
+        str
+            Data from the mainframe.
+        
         """
         _debug('read()')
 
@@ -112,11 +112,35 @@ class SIM900_api():
         return response.strip()
     
     def writePort(self, port, message):
+        """
+        Writes a message to the selected port.
+
+        Parameters
+        ----------
+        port (int)
+            Port number (between 1-8) to be addressed.
+            
+        message (str)
+            String message to send to the mainframe.
+            
+        """        
         _debug('writePort('+"'"+message+"'"+')')
         self.instrument.write("SNDT %d, '%s'"%(port,message))
     
     def readPort(self, port, nbytes = None):
+        """
+        Reads a message from the selected port buffer.
+
+        Parameters
+        ----------
+        port (int)
+            Port number (between 1-8) to be addressed.
+        nbytes(int)
+            (Optional) Number of bytes to retrieve from port.
+            If not supplied, mainframe will be queried to 
+            determine it's value.
         
+        """     
         # Determine number of bytes waiting in the port input buffer
         if (nbytes == None): nbytes = self.inWaiting(port)
         
@@ -127,6 +151,27 @@ class SIM900_api():
         return response.strip()
     
     def queryPort(self, port, message, nbytes = None):
+        """
+        Queries the selected port.
+        Automatically flushes the port before query.
+
+        Parameters
+        ----------
+        port (int)
+            Port number (between 1-8) to be addressed.
+        message (str)
+            String message to send to the mainframe.
+        nbytes(int)
+            (Optional) Number of bytes to retrieve from port.
+            If not supplied, mainframe will be queried to 
+            determine it's value.
+            
+        Returns
+        -------
+        str
+            Query response from the selected port.
+        
+        """   
         
         if(self.inWaiting(port) != 0): self.flush(port)
         self.writePort(port,message)
@@ -134,33 +179,34 @@ class SIM900_api():
         s = self.readPort(port)
         return s
 
-    def inWaiting(self, p):
+    def inWaiting(self, port):
         """
         Queries the mainframe to get the number of bytes waiting
-        in the Port p input buffer.
+        in the selected port input buffer.
 
         Parameters
         ----------
-        p : int
-            Port number 1-8.
+        port : int
+            Port number (between 1-8) to be addressed.
 
         Returns
         -------
         int
-            Number of bytes waiting in port p input buffer.
+            Number of bytes waiting in the selectedport input buffer.
 
         """
-        n = self.query("NINP? %d"%p)
+        n = self.query("NINP? %d"%port)
         
         return int(n)
         
     def flush(self, port = None):
         """
-        Flushes Port input buffers [associated with port p].
+        Flushes Port input buffers [associated with the selected port].
+        If no port number is supplied, all port buffers are flushed.
 
         Parameters
         ----------
-        p : int (optional)
+        port : int (optional)
             Port number to flush.
 
         """
@@ -169,6 +215,7 @@ class SIM900_api():
         
     def scanPorts(self):
     # Loop over all port numbers
+        ports = []
         for i in range(1,9):
             
             self.instrument.write("SNDT %d,'*IDN?'"%i)
@@ -177,8 +224,11 @@ class SIM900_api():
             if(j!= 0): 
                 s = self.query("RAWN? %d,%d"%(i,j)).split(',')[1]          
                 print("Port %d: %s"%(i,s))
+                ports.append([i,s])
             else:
                 print("Port %d: Empty"%i)
+                ports.append(None)
+        return ports
 
 def _debug(message):
     if _DEBUG: print(message)
