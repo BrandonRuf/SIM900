@@ -173,9 +173,15 @@ class SIM900_api():
         
         """   
         
+        # Check port for pre-existing data, flush if there is
         if(self.inWaiting(port) != 0): self.flush(port)
+        
+        # Write message to port
         self.writePort(port,message)
+        
         _time.sleep(WRITE_DELAY)
+        
+        # Read port
         s = self.readPort(port)
         return s
 
@@ -213,7 +219,20 @@ class SIM900_api():
         if(port==None): self.instrument.write("FLSI")
         else:           self.instrument.write("FLSI %d"%port)
         
-    def scanPorts(self):
+    def scanPorts(self, verbose = False):
+        """
+        Scan all ports for connected modules.
+        
+        verbose : bool
+            If True, print a list of the port contents.
+
+        Returns
+        -------
+        List
+            A 8-element list. Each element is either a string 
+            of the module ID or a None. 
+
+        """
     # Loop over all port numbers
         ports = []
         for i in range(1,9):
@@ -223,12 +242,20 @@ class SIM900_api():
             j = self.inWaiting(i)
             if(j!= 0): 
                 s = self.query("RAWN? %d,%d"%(i,j)).split(',')[1]          
-                print("Port %d: %s"%(i,s))
-                ports.append([i,s])
+                if(verbose): print("Port %d: %s"%(i,s))
+                ports.append(s)
             else:
-                print("Port %d: Empty"%i)
+                if(verbose): print("Port %d: Empty"%i)
                 ports.append(None)
         return ports
+    
+    def close(self):
+        """
+        Closes the connection to the device.
+        
+        """
+        _debug("close()")
+        if not self.instrument == None: self.instrument.close()        
 
 def _debug(message):
     if _DEBUG: print(message)
