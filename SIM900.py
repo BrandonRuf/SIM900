@@ -82,10 +82,18 @@ class SIM900(_g.BaseObject):
         
         # SIM922 settings
         self.settings.add_parameter('SIM922/ID', '', readonly=True)
+        self.settings.add_parameter('SIM922/Port', '', readonly=True)
         self.settings.add_parameter('SIM922/Channels/1', False)
         self.settings.add_parameter('SIM922/Channels/2', False)
         self.settings.add_parameter('SIM922/Channels/3', False)
         self.settings.add_parameter('SIM922/Channels/4', False)
+        
+        self.settings.add_parameter('SIM970/ID', '', readonly=True)
+        self.settings.add_parameter('SIM970/Port', '', readonly=True)
+        self.settings.add_parameter('SIM970/Channels/1', False)
+        self.settings.add_parameter('SIM970/Channels/2', False)
+        self.settings.add_parameter('SIM970/Channels/3', False)
+        self.settings.add_parameter('SIM970/Channels/4', False)
         
         # Make things easier
         d = self.settings
@@ -126,7 +134,11 @@ class SIM900(_g.BaseObject):
                 self.label_dmm_name.set_colors('blue')
             
             self.settings["SIM922/ID"] = self.api.queryPort(1, "*IDN?")[33:].replace(",", " ")
+            self.settings["SIM922/Port"] = 1
             ex = self.api.queryPort(1,"EXON? 0").replace(' ','').split(',')
+            
+            self.settings["SIM970/ID"] = self.api.queryPort(7, "*IDN?")[33:].replace(",", " ")
+            self.settings["SIM970/Port"] = 7
             
             for n in range(4):
                 self.settings["SIM922/Channels/%d"%(n+1)] = int(ex[n])
@@ -279,5 +291,5 @@ def _debug(message):
         
 if __name__ == '__main__':
     self = SIM900()
-    #self.settings['VISA/Device'] = 'COM4'
+    self.settings['VISA/Device'] = 'COM4'
     #self.button_connect.click()
