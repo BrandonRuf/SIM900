@@ -54,12 +54,13 @@ class SIM900(_g.BaseObject):
         self.settings  = self.grid_bot.place_object(_g.TreeDictionary(),alignment=0).set_width(250)
         self.tabs_data = self.grid_bot.place_object(_g.TabArea(autosettings_path+'_tabs_data.txt'), alignment=0)
         self.tab_raw   = self.tabs_data.add_tab('Raw Data')
+        
 
         self.label_path = self.tab_raw.add(_g.Label('Output Path:').set_colors('cyan' if _s.settings['dark_theme_qt'] else 'blue'))
         self.tab_raw.new_autorow()
 
         self.plot_raw  = self.tab_raw.place_object(_g.DataboxPlot('*.csv', autosettings_path+'_plot_raw.txt', autoscript=1), alignment=0)
-        
+       
         self.grid_bot.set_column_stretch(1,1)
         # Create a resource management object to populate the list
         if _mp._visa:
@@ -101,6 +102,10 @@ class SIM900(_g.BaseObject):
         # Connect all the signals
         self.button_connect.signal_clicked.connect(self._button_connect_clicked)
         self.button_acquire.signal_clicked.connect(self._button_acquire_clicked)
+        self.settings.connect_signal_changed("SIM922/Channels/1",self.sim922_refresh)
+        self.settings.connect_signal_changed("SIM922/Channels/2",self.sim922_refresh)
+        self.settings.connect_signal_changed("SIM922/Channels/3",self.sim922_refresh)
+        self.settings.connect_signal_changed("SIM922/Channels/4",self.sim922_refresh)
 
         # Run the base object stuff and autoload settings
         _g.BaseObject.__init__(self, autosettings_path=autosettings_path)
@@ -133,16 +138,26 @@ class SIM900(_g.BaseObject):
                 self.label_dmm_name.set_text(self.api.id)
                 self.label_dmm_name.set_colors('blue')
             
-            self.settings["SIM922/ID"] = self.api.queryPort(1, "*IDN?")[33:].replace(",", " ")
-            self.settings["SIM922/Port"] = 1
-            ex = self.api.queryPort(1,"EXON? 0").replace(' ','').split(',')
+            '''scan = self.api.scanPorts()
+            loc = [i for i in range(len(scan)) if scan[i] != None]
             
-            self.settings["SIM970/ID"] = self.api.queryPort(7, "*IDN?")[33:].replace(",", " ")
+            for i in loc:
+                if scan[i] == 'SIM922': self.settings["SIM922/Port"] = i+1
+                if scan[i] == 'SIM970': self.settings["SIM970/Port"] = i+1'''
+                
+            self.settings["SIM922/Port"] = 1
             self.settings["SIM970/Port"] = 7
             
+            # Check Module IDs
+            self.settings["SIM922/ID"] = self.api.queryPort(int(self.settings["SIM922/Port"]), "*IDN?")[33:].replace(",", " ")
+            self.settings["SIM970/ID"] = self.api.queryPort(int(self.settings["SIM970/Port"]), "*IDN?")[33:].replace(",", " ")
+            
+            # Check the 4 SIM922 channels
+            ex = self.api.queryPort(int(self.settings["SIM922/Port"]),"EXON? 0").replace(' ','').split(',')
+            self.settings.block_signals()
             for n in range(4):
                 self.settings["SIM922/Channels/%d"%(n+1)] = int(ex[n])
-                self.settings.connect_signal_changed("SIM922/Channels/%d"%(n+1),self.sim922_refresh)
+            self.settings.unblock_signals()
 
             # Enable the Acquire button
             self.button_acquire.enable()
@@ -154,6 +169,8 @@ class SIM900(_g.BaseObject):
                 self.api.close()
             self.api = None
             self.label_dmm_name.set_text('Disconnected')
+            self.settings['SIM922/ID'] = ''
+            self.settings['SIM970/ID'] = ''
 
             # Make sure it's not still red.
             self.label_dmm_name.set_style('')
@@ -217,13 +234,13 @@ class SIM900(_g.BaseObject):
         while self.button_acquire.is_checked():
 
             
-            self.api.writePort(1,"VOLT? 0")
+            self.api.writePort(int(self.settings["SIM922/Port"]),"VOLT? 0")
             for i in range(3):
                 _time.sleep(.1)
                 self.window.process_events()
             
             _debug('    getting the voltage')
-            v = self.api.readPort(1).split(',')
+            v = self.api.readPort(int(self.settings["SIM922/Port"])).split(',')
             v = [float(i) for i in v]
             t = _time.time() - self.api._t0
             
@@ -284,7 +301,7 @@ class SIM900(_g.BaseObject):
     def sim922_refresh(self):
         for n in range(4):
             val = self.settings["SIM922/Channels/%d"%(n+1)]
-            self.api.writePort(1, "EXON %d, %d"%(n+1,val))
+            self.api.writePort(int(self.settings["SIM922/Port"]), "EXON %d, %d"%(n+1,val))
                 
 def _debug(message):
     if _DEBUG: print(message)
