@@ -148,12 +148,17 @@ class SIM900(_g.BaseObject):
             self.settings["SIM922/Port"] = 1
             self.settings["SIM970/Port"] = 7
             
-            # Check Module IDs
-            self.settings["SIM922/ID"] = self.api.queryPort(int(self.settings["SIM922/Port"]), "*IDN?")[33:].replace(",", " ")
-            self.settings["SIM970/ID"] = self.api.queryPort(int(self.settings["SIM970/Port"]), "*IDN?")[33:].replace(",", " ")
+            self.SIM922 = self.api.SIM922_api(self.api, port = int(self.settings["SIM922/Port"]))
+            self.SIM970 = self.api.SIM970_api(self.api, port = int(self.settings["SIM970/Port"]))
             
-            # Check the 4 SIM922 channels
-            ex = self.api.queryPort(int(self.settings["SIM922/Port"]),"EXON? 0").replace(' ','').split(',')
+            # Check Module IDs
+            self.settings["SIM922/ID"] = self.SIM922.getID()
+            self.settings["SIM970/ID"] = self.SIM970.getID()
+            
+            # Get the on/off status of the 4 SIM922 channels
+            ex = self.SIM922.getExcitation()
+            
+            # Set the channel on/off status in the GUI
             self.settings.block_signals()
             for n in range(4):
                 self.settings["SIM922/Channels/%d"%(n+1)] = int(ex[n])
@@ -219,7 +224,11 @@ class SIM900(_g.BaseObject):
         d['t'] = []
         for n in range(4):
             if self.settings["SIM922/Channels/%d"%(n+1)]: 
-                d['v'+str(n+1)] = []
+                d['v22_'+str(n+1)] = []
+                
+        for n in range(4):
+            if self.settings["SIM970/Channels/%d"%(n+1)]: 
+                d['v70_'+str(n+1)] = []
         
         # Reset the clock and record it as header
         self.api._t0 = _time.time()
@@ -234,14 +243,19 @@ class SIM900(_g.BaseObject):
         while self.button_acquire.is_checked():
 
             
-            self.api.writePort(int(self.settings["SIM922/Port"]),"VOLT? 0")
+            self.SIM922.write("VOLT? 0")
+            self.SIM970.write("VOLT? 0")
             for i in range(3):
                 _time.sleep(.1)
                 self.window.process_events()
             
             _debug('    getting the voltage')
-            v = self.api.readPort(int(self.settings["SIM922/Port"])).split(',')
-            v = [float(i) for i in v]
+            v22 = self.SIM922.read().split(',')
+            v22 = [float(i) for i in v22]
+                
+            v70 = self.SIM970.read().split(',')
+            v70 = [float(i) for i in v70]
+
             t = _time.time() - self.api._t0
             
             d['t'] = _n.append(d['t'], t)
@@ -252,10 +266,19 @@ class SIM900(_g.BaseObject):
                 if self.settings["SIM922/Channels/%d"%(n+1)]: 
                     
                     # Append the new data points
-                    d['v'+str(n+1)] = _n.append(d['v'+str(n+1)], v[n])
+                    d['v22_'+str(n+1)] = _n.append(d['v22_'+str(n+1)], v22[n])
     
                     # Append this to the list
-                    data = data + [v[n]]
+                    data = data + [v22[n]]
+                    
+            for n in range(4):
+                if self.settings["SIM970/Channels/%d"%(n+1)]: 
+                    
+                    # Append the new data points
+                    d['v70_'+str(n+1)] = _n.append(d['v70_'+str(n+1)], v70[n])
+    
+                    # Append this to the list
+                    data = data + [v70[n]]
             # Update the plot
             self.plot_raw.plot()
             self.window.process_events()
@@ -301,7 +324,7 @@ class SIM900(_g.BaseObject):
     def sim922_refresh(self):
         for n in range(4):
             val = self.settings["SIM922/Channels/%d"%(n+1)]
-            self.api.writePort(int(self.settings["SIM922/Port"]), "EXON %d, %d"%(n+1,val))
+            self.SIM922.setExcitation(n+1,val)
                 
 def _debug(message):
     if _DEBUG: print(message)

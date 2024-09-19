@@ -6,7 +6,8 @@ import numpy   as _n
 import time    as _time
 import pyvisa  as _visa
 
-_DEBUG = True
+_DEBUG      = True
+_AUTO_FLUSH = True
 WRITE_DELAY = .3
 
 class SIM900_api():
@@ -108,7 +109,7 @@ class SIM900_api():
         self.write(message)
         _time.sleep(WRITE_DELAY)
         
-        response = self.instrument.read()
+        response = self.read()
         return response.strip()
     
     def writePort(self, port, message):
@@ -135,6 +136,7 @@ class SIM900_api():
         ----------
         port (int)
             Port number (between 1-8) to be addressed.
+            
         nbytes(int)
             (Optional) Number of bytes to retrieve from port.
             If not supplied, mainframe will be queried to 
@@ -144,11 +146,16 @@ class SIM900_api():
         # Determine number of bytes waiting in the port input buffer
         if (nbytes == None): nbytes = self.inWaiting(port)
         
+        # Request nbytes from port 
         self.instrument.write("RAWN? %d,%d" %(port,nbytes))
-        _time.sleep(WRITE_DELAY)
-        response = self.instrument.read()
         
-        return response.strip()
+        # Wait for bytes to arrive in the host queue
+        _time.sleep(WRITE_DELAY)
+        
+        # Read the response
+        response = self.read()
+        
+        return response
     
     def queryPort(self, port, message, nbytes = None):
         """
@@ -159,8 +166,10 @@ class SIM900_api():
         ----------
         port (int)
             Port number (between 1-8) to be addressed.
+            
         message (str)
             String message to send to the mainframe.
+            
         nbytes(int)
             (Optional) Number of bytes to retrieve from port.
             If not supplied, mainframe will be queried to 
@@ -173,8 +182,12 @@ class SIM900_api():
         
         """   
         
-        # Check port for pre-existing data, flush if there is
-        if(self.inWaiting(port) != 0): self.flush(port)
+        if(_AUTO_FLUSH):
+            # Pre-emptively flush the port 
+            self.flush(port)
+        else:
+            # Check port for pre-existing data, flush if there is
+            if(self.inWaiting(port) != 0): self.flush(port)
         
         # Write message to port
         self.writePort(port,message)
@@ -257,8 +270,186 @@ class SIM900_api():
         _debug("close()")
         if not self.instrument == None: self.instrument.close()        
 
+
+
+
+
+    class SIM_Module():
+        """
+        General SIM module object.
+        
+        Parameters
+        ----------
+        SIM900_api
+            The SRS SIM900 Mainframe API object that the Module is 
+            connected to.
+            
+        port (int)
+            Port number (between 1-8) of the Module to be addressed.
+        
+        """  
+        def __init__(self, SIM900_api, port):
+            self.SIM900 = SIM900_api
+            self.port = port
+            
+            # Query the module for it's ID
+            self.id = self.query("*IDN?")[33:].replace(",", " ")
+        
+        def write(self, msg):
+            """
+            Writes a message to the SIM module.
+
+            Parameters
+            ----------
+                
+            message (str)
+                String message to send to the module.
+                
+            """   
+            self.SIM900.writePort(int(self.port),msg)
+        
+        def read(self, nbytes = None):
+            """
+            Reads a message from the selected SIM module port buffer.
+
+            Parameters
+            ----------
+            nbytes(int)
+                (Optional) Number of bytes to retrieve from port.
+                If not supplied, mainframe will be queried to 
+                determine it's value.
+            
+            """     
+            return self.SIM900.readPort(self.port, nbytes)
+        
+        def query(self, msg, nbytes = None):
+            """
+            Queries the module.
+            Automatically flushes the module before query.
+    
+            Parameters
+            ----------
+            message (str)
+                String message to send to the module.
+            nbytes(int)
+                (Optional) Number of bytes to retrieve from module.
+                If not supplied, mainframe port buffer will be queried to 
+                determine it's value.
+                
+            Returns
+            -------
+            str
+                Query response from the module.
+            
+            """      
+            return self.SIM900.queryPort(self.port, msg)     
+            
+        def getID(self):
+            return self.id        
+        
+        
+        
+    class SIM922_api(SIM_Module):
+        """
+        This object lets you query an SRS 922 Diode Temperature Monitor
+        Module.
+        
+        Parameters
+        ----------
+        SIM900_api
+            The SRS SIM900 Mainframe API object that the SIM922 is 
+            connected to.
+        port (int)
+            Port number (between 1-8) of the SIM922 to be addressed.
+        
+        """
+        def __init__(self, SIM900_api, port):
+            super().__init__(SIM900_api, port)
+            return 
+        
+        def getExcitation(self, channel = None):
+            """
+            Get excitation state (current ON/OFF) on a given channel.
+            
+            Parameters
+            ----------
+            channel (int)
+                (Optional) Channel number (between 1-4) to be queried.
+                If no argument is given, then all four excitation states
+                are read. 
+                
+            Returns
+            -------
+            bool
+                Excitation state of requested channel.
+                If no channel number was supplied, a list 
+                of all four excitation states is returned.
+            
+            """
+            if channel == None:
+                ex = self.SIM900.queryPort(self.port,"EXON? 0")
+                
+                # Format the response into boolean array
+                ex = ex.replace(' ','').split(',')
+                
+                return [bool(int(e)) for e in ex]
+            else:
+                ex = self.SIM900.queryPort(self.port,"EXON? %d"%channel)
+                return bool(int(ex))
+        
+        def setExcitation(self, channel, state):
+            """
+            
+
+            Parameters
+            ----------
+            channel : TYPE
+                DESCRIPTION.
+            state : TYPE
+                DESCRIPTION.
+
+            Returns
+            -------
+            None.
+
+            """
+            self.write("EXON %d, %d"%(channel,state))
+    class SIM970_api(SIM_Module):
+        """
+        This object lets you query an SRS 970 Quad Digital Voltmeter
+        Module.
+        
+        Parameters
+        ----------
+        SIM900_api
+            The SRS SIM900 Mainframe API object that the SIM970 is 
+            connected to.
+            
+        port (int)
+            Port number (between 1-8) of the SIM970 to be addressed.
+        
+        """        
+        def __init__(self, SIM900_api, port):
+            super().__init__(SIM900_api, port) 
+        
+        def funMesg(self):
+            self.write("DISX 3 ,0")
+            self.write("DISX 4 ,0")
+            
+            #_time.sleep(.1)
+            
+            self.write("MESG 3 ,_CRYO")
+            self.write("MESG 4 ,_STAT")
+            
+
 def _debug(message):
     if _DEBUG: print(message)
     
 if __name__ == '__main__':
-    self = SIM900_api()
+    self = SIM900_api('ASRL4::INSTR')
+    
+    # Setup a SIM922 on port 1
+    SIM922 = self.SIM922_api(self, 1)
+    
+    # Setup a SIM970 on port 7
+    SIM970 = self.SIM970_api(self, 7)
