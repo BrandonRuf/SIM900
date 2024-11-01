@@ -40,7 +40,7 @@ class SIM900_api():
         # Try to open the instrument.
         try:
             self.instrument = self.resource_manager.open_resource(name)
-            self.instrument.timeout = 2000
+            self.instrument.timeout = 4000
 
             # Test that it's responding and figure out the type.
             try:
@@ -150,7 +150,7 @@ class SIM900_api():
         self.instrument.write("RAWN? %d,%d" %(port,nbytes))
         
         # Wait for bytes to arrive in the host queue
-        _time.sleep(WRITE_DELAY)
+        #_time.sleep(WRITE_DELAY)
         
         # Read the response
         response = self.read()
@@ -414,6 +414,8 @@ class SIM900_api():
 
             """
             self.write("EXON %d, %d"%(channel,state))
+            
+            
     class SIM970_api(SIM_Module):
         """
         This object lets you query an SRS 970 Quad Digital Voltmeter

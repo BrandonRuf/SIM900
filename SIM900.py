@@ -197,7 +197,6 @@ class SIM900(_g.BaseObject):
         if self.api == None:
             self.button_acquire(False)
             return
-        self.settings.disable()
         
         # Ask the user for the dump file
         self.path = _s.dialogs.save('*.csv', 'Select an output file.', force_extension='*.csv')
@@ -209,7 +208,7 @@ class SIM900(_g.BaseObject):
         # Update the label
         self.label_path.set_text('Output Path: ' + self.path)
 
-        _debug('  path='+repr(self.path))
+        _debug('\t path='+repr(self.path))
 
         # Disable the connection button
         self._set_acquisition_mode(True)
@@ -218,10 +217,13 @@ class SIM900(_g.BaseObject):
         d = self.plot_raw
 
         # Set up the databox columns
-        _debug('  setting up databox')
+        _debug('\t Setting up databox')
         d.clear()
         
+        # Time column
         d['t'] = []
+        
+        # SIM922 and SIM970 channel columns
         for n in range(4):
             if self.settings["SIM922/Channels/%d"%(n+1)]: 
                 d['v22_'+str(n+1)] = []
@@ -242,22 +244,31 @@ class SIM900(_g.BaseObject):
         _debug('  starting the loop')
         while self.button_acquire.is_checked():
 
-            
+            # Ask for the SIM922 and SIM970 channel data (all four channels)
             self.SIM922.write("VOLT? 0")
             self.SIM970.write("VOLT? 0")
+            
+            # Wait for bytes to arrive in the host queue 
             for i in range(3):
                 _time.sleep(.1)
                 self.window.process_events()
             
-            _debug('    getting the voltage')
-            v22 = self.SIM922.read().split(',')
-            v22 = [float(i) for i in v22]
-                
-            v70 = self.SIM970.read().split(',')
-            v70 = [float(i) for i in v70]
-
-            t = _time.time() - self.api._t0
+            _debug('\t Getting the voltage')
             
+            # Read SIM922 data, total 56 bytes
+            v22 = self.SIM922.read(nbytes=56).split(',')
+            v22 = [float(i) for i in v22]
+            
+            self.window.process_events()
+            
+            # Read SIM970 data, total 45 bytes
+            v70 = self.SIM970.read(nbytes=45).split(',')
+            v70 = [float(i) for i in v70]
+            
+            self.window.process_events()
+            
+            # Get the time
+            t = _time.time() - self.api._t0
             d['t'] = _n.append(d['t'], t)
             data   = [t]
 
@@ -271,6 +282,8 @@ class SIM900(_g.BaseObject):
                     # Append this to the list
                     data = data + [v22[n]]
                     
+                    self.window.process_events()
+                    
             for n in range(4):
                 if self.settings["SIM970/Channels/%d"%(n+1)]: 
                     
@@ -279,6 +292,9 @@ class SIM900(_g.BaseObject):
     
                     # Append this to the list
                     data = data + [v70[n]]
+                    
+                    self.window.process_events()
+                    
             # Update the plot
             self.plot_raw.plot()
             self.window.process_events()
@@ -291,7 +307,6 @@ class SIM900(_g.BaseObject):
         # Re-enable the connect button
         self._set_acquisition_mode(False)
         
-        self.settings.enable()
 
     def _dump(self, a, mode='a'):
         """
@@ -314,6 +329,7 @@ class SIM900(_g.BaseObject):
         """
         _debug('_set_acquisition_mode('+repr(mode)+')')
         self.button_connect.disable(mode)
+        self.settings.disable(mode)
 
     def event_close(self, *a):
         """
@@ -322,6 +338,8 @@ class SIM900(_g.BaseObject):
         self.button_acquire.set_checked(False)
     
     def sim922_refresh(self):
+        
+        # Loop over the 4 channels
         for n in range(4):
             val = self.settings["SIM922/Channels/%d"%(n+1)]
             self.SIM922.setExcitation(n+1,val)
